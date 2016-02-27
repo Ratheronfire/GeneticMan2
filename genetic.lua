@@ -13,6 +13,10 @@ generation = 0
 
 iteration = 1
 totalIterations = 0
+fitness = 0
+currentInput = 0
+
+bestFitnesses = {}
 
 screenPos = 0
 health = 32
@@ -20,7 +24,12 @@ lives = 3
 robotsBeaten = 0
 xPos = 0
 yPos = 0
+horizScroll = 0
 
+textForegroundColor = 0xD000FF00
+textBackgroundColor = 0xD0000000
+screenBorderColor = 0xA050FFFF
+pointColor = 0xFF000000
 
 memoized_inputs = {}
 
@@ -28,7 +37,8 @@ resetCommand = {["Reset"] = true}
 
 ramAddresses = {["X Pos"] = 0x0460, ["Y Pos"] = 0x04A0,
     ["Health"] = 0x06C0, ["Lives"] = 0x00A8,
-    ["Screen Pos"] = 0x0440, ["Robot Masters Beaten"] = 0x009A }
+    ["Screen Pos"] = 0x0440, ["Robot Masters Beaten"] = 0x009A,
+    ["Horiz Scroll"] = 0x001F}
 
 states = {"Initial Generation", "Breeding", "Mutating"}
 currentState = 1
@@ -65,6 +75,49 @@ function rPrint(s, l, i) -- recursive Print (structure, limit, indent)
     return l
 end
 
+function drawData()
+    gui.text(0, 0, "Fitness: " .. fitness, textBackgroundColor, textForegroundColor)
+    gui.text(0, 64, "Screen position: " .. screenPos, textBackgroundColor, textForegroundColor)
+    gui.text(0, 80, "Health: " .. health, textBackgroundColor, textForegroundColor)
+    gui.text(0, 96, "Lives: " .. lives, textBackgroundColor, textForegroundColor)
+    gui.text(0, 112, "Robot Masters beaten: " .. robotsBeaten, textBackgroundColor, textForegroundColor)
+    gui.text(0, 128, "(" .. xPos .. ", " .. yPos .. ")", textBackgroundColor, textForegroundColor)
+
+    gui.text(0, 160, "State: " .. states[currentState], textBackgroundColor, textForegroundColor)
+    gui.text(0, 176, "Generation " .. generation + 1 .. " - Iteration " .. iteration, textBackgroundColor, textForegroundColor)
+    gui.text(0, 192, currentInput .. "/" .. inputCount .. " inputs", textBackgroundColor, textForegroundColor)
+    gui.text(0, 208, totalIterations .. " total candidates", textBackgroundColor, textForegroundColor)
+
+    if horizScroll == 0 then gui.drawLine(0, 0, 0, 255, screenBorderColor) end
+    gui.drawLine(255 - horizScroll, 0, 255 - horizScroll, 255, screenBorderColor)
+
+    local fitnessesToGraph = table.getn(bestFitnesses)
+    if fitnessesToGraph > 0 then
+        local maxFitness = math.max(unpack(bestFitnesses))
+        local maxOffset = 0
+
+        if maxFitness > 0 then
+            maxOffset = 16 * (math.ceil(math.log10(maxFitness)) - 3)
+        end
+
+        gui.drawBox(140, 100, 230, 20, 0x00000000, screenBorderColor)
+        gui.drawLine(140, 100, 140, 20)
+        gui.drawLine(140, 100, 230, 100)
+        gui.text(450, 32, "Last 20 Fitnesses")
+        gui.text(400 - maxOffset, 64, maxFitness)
+        gui.text(400, 288, "0")
+
+        for i=1,fitnessesToGraph - 1 do
+            gui.drawLine(140 + (4.5 * (i - 1)), 100 - (80 * bestFitnesses[i] / maxFitness),
+                140 + (4.5 * i), 100 - (80 * bestFitnesses[i + 1] / maxFitness), pointColor)
+
+            i = i + 1
+        end
+    else
+        gui.text(350, 32, "Graph will appear after this iteration")
+    end
+end
+
 function calculateBeatenRobotMasters()
     local robotMasterFlags = memory.readbyte(ramAddresses["Robot Masters Beaten"])
     local count = 0
@@ -83,12 +136,7 @@ function calculateFitness()
     robotsBeaten = calculateBeatenRobotMasters()
     xPos = memory.readbyte(ramAddresses["X Pos"])
     yPos = memory.readbyte(ramAddresses["Y Pos"])
-
-    gui.drawText(0, 0, "Screen position: " .. screenPos, 0xFFFFFFFF, 0xFFFFFFFF, 12)
-    gui.text(0, 64, "Health: " .. health)
-    gui.text(0, 80, "Lives: " .. lives)
-    gui.text(0, 96, "Robot Masters beaten: " .. robotsBeaten)
-    gui.text(0, 112, "(" .. xPos .. ", " .. yPos .. ")")
+    horizScroll = memory.readbyte(ramAddresses["Horiz Scroll"])
 
     return (screenPos + 1) * health * lives * math.pow((robotsBeaten + 1), 3)
 end
@@ -168,11 +216,6 @@ function testInputs(inputs, inputCount)
     if repeatedInputs then
         print("Skipping repeated input pattern.")
 
-        gui.text(0, 0, "Skipping repeated input pattern.")
-        gui.text(0, 144, "State: " .. states[currentState])
-        gui.text(0, 160, "Gen " .. generation + 1 .. " - Iter " .. iteration)
-        gui.text(0, 192, totalIterations .. " total candidates")
-
         iteration = iteration + 1
 
         emu.frameadvance()
@@ -187,21 +230,19 @@ function testInputs(inputs, inputCount)
         emu.frameadvance() --ensure the game resets before we start reading data
     end
 
-    for i=1, inputCount do
+    for i =1, inputCount do
+        currentInput = i
+
         local fitness = calculateFitness()
         totalFitness = totalFitness + fitness
 
-        gui.text(0, 0, "Fitness: " .. fitness)
-        gui.text(0, 144, "State: " .. states[currentState])
-        gui.text(0, 160, "Gen " .. generation + 1 .. " - Iter " .. iteration)
-        gui.text(0, 176, i .. "/" .. inputCount .. " inputs")
-        gui.text(0, 192, totalIterations .. " total candidates")
+        drawData()
 
         if lives == 0 or inputs[i] == nil then
             break
         end
 
-        buttons = byteToInputs(inputs[i])
+        local buttons = byteToInputs(inputs[i])
 
         joypad.set(buttons)
 
@@ -209,6 +250,18 @@ function testInputs(inputs, inputCount)
     end
 
     print("Fitness for " .. generation + 1 .. "-" .. iteration .. ": " .. totalFitness)
+
+    local fitnessGraphCount = table.getn(bestFitnesses)
+
+    if fitnessGraphCount < 20 then
+        bestFitnesses[fitnessGraphCount + 1] = totalFitness
+    else
+        for i=1,fitnessGraphCount - 1 do
+            bestFitnesses[i] = bestFitnesses[i + 1]
+        end
+
+        bestFitnesses[20] = totalFitness
+    end
 
     table.insert(memoized_inputs, {inputs, totalFitness})
 
