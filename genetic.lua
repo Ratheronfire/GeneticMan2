@@ -1,4 +1,7 @@
-inputCount = 250000
+JSON = (loadfile "JSON.lua")()
+saveFileBase = "save_file"
+
+inputCount = 20
 maxGenerations = 1000
 initialSize = 20
 
@@ -17,6 +20,7 @@ fitness = 0
 currentInput = 0
 
 bestFitnesses = {}
+herd = {}
 
 screenPos = 0
 health = 32
@@ -75,6 +79,64 @@ function rPrint(s, l, i) -- recursive Print (structure, limit, indent)
     return l
 end
 
+-- From lhf
+-- http://stackoverflow.com/a/4991602
+function file_exists(name)
+    local f=io.open(name,"r")
+    if f~=nil then io.close(f) return true else return false end
+end
+
+function saveData()
+    for i=1,101 do
+        local fileName = saveFileBase .. i .. ".json"
+
+        if not file_exists(fileName) then
+            outfile = io.open(fileName, 'w')
+
+            jsonData = {['inputCount'] = inputCount, ['maxGenerations'] = maxGenerations,
+                ['breedChance'] = breedChance, ['mutateSubjectChance'] = mutateSubjectChance,
+                ['mutateInputChance'] = mutateInputChance, ['cullFinalAmount'] = cullFinalAmount,
+                ['generation'] = generation, ['iteration'] = iteration,
+                ['totalIterations'] = totalIterations, ['herd'] = herd}
+
+            outfile:write(JSON:encode(jsonData))
+            io.close(outfile)
+        end
+
+        if i > 100 then
+            print("Failed to save file after 100 attempts.")
+        end
+    end
+end
+
+function loadData()
+    for i=1,101 do
+        local fileName = saveFileBase .. i ..".json"
+
+        if file_exists(fileName) then
+            infile = io.open(fileName, 'r')
+
+            jsonString = infile:read("*all")
+            jsonData = JSON:decode(jsonString)
+
+            inputCount = jsonData['inputCount']
+            maxGenerations = jsonData['maxGenerations']
+            breedChance = jsonData['breedChance']
+            mutateSubjectChance = jsonData['mutateSubjectChance']
+            mutateInputChance = jsonData['mutateInputChance']
+            cullFinalAmount = jsonData['cullFinalAmount']
+            generation = jsonData['generation']
+            iteration = jsonData['iteration']
+            totalIterations = jsonData['totalIterations']
+            herd = jsonData['herd']
+        end
+
+        if i > 100 then
+            print("Failed to load file after 100 attempts.")
+        end
+    end
+end
+
 function drawData()
     gui.text(0, 0, "Fitness: " .. fitness, textBackgroundColor, textForegroundColor)
     gui.text(0, 64, "Screen position: " .. screenPos, textBackgroundColor, textForegroundColor)
@@ -94,6 +156,9 @@ function drawData()
     local fitnessesToGraph = table.getn(bestFitnesses)
     if fitnessesToGraph > 0 then
         local maxFitness = math.max(unpack(bestFitnesses))
+
+        if maxFitness == 0 then maxFitness = 1 end -- prevent divide by 0
+
         local maxOffset = 0
 
         if maxFitness > 0 then
@@ -346,6 +411,7 @@ end
 
 herd = generateHerd(initialSize)
 
+
 for _=1,maxGenerations do
     herd = sortHerd(herd)
 
@@ -361,4 +427,6 @@ for _=1,maxGenerations do
 
     iteration = 0
     generation = generation + 1
+
+    if generation % 10 == 0 then saveData() end
 end
