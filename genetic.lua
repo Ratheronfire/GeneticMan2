@@ -1,7 +1,4 @@
-JSON = (loadfile "JSON.lua")()
-saveFileBase = "save_file"
-
-inputCount = 20
+inputCount = 250000
 maxGenerations = 1000
 initialSize = 20
 
@@ -20,7 +17,6 @@ fitness = 0
 currentInput = 0
 
 bestFitnesses = {}
-herd = {}
 
 screenPos = 0
 health = 32
@@ -30,12 +26,17 @@ xPos = 0
 yPos = 0
 horizScroll = 0
 
-textForegroundColor = 0xD000FF00
-textBackgroundColor = 0xD0000000
+textForegroundColor = 0xFF0050FF
+textBackgroundColor = 0xFFFFFFFF
 screenBorderColor = 0xA050FFFF
 pointColor = 0xFF000000
 
 memoized_inputs = {}
+
+JSON = (loadfile "JSON.lua")()
+saveFileBase = "save_file"
+lastInput = {}
+loadingFile = false
 
 resetCommand = {["Reset"] = true}
 
@@ -51,6 +52,45 @@ memory.usememorydomain("RAM")
 buttons = joypad.getimmediate()
 
 gui.defaultBackground(0xFFFFFFFF)
+
+function main()
+    console.clear()
+
+    herd = generateHerd(initialSize)
+
+    processHerd(generation)
+end
+
+function processHerd(startGeneration)
+    for i=startGeneration,maxGenerations do
+        herd = sortHerd(herd)
+
+        herd = cullHerd(herd)
+
+        currentState = 2
+        herd = breedHerd(herd)
+
+        currentState = 3
+        herd = mutateHerd(herd)
+
+        if loadingFile then
+            loadingFile = false
+
+            memoized_inputs = {}
+
+            processHerd(generation)
+
+            return
+        end
+
+        print("End of generation " .. generation + 1 .. ".  Best fitness: " .. herd[1][2][1])
+
+        iteration = 0
+        generation = generation + 1
+
+        if generation % 10 == 0 then saveData() end
+    end
+end
 
 -- Recursive print courtesy of stuby
 -- https://gist.github.com/stuby/5445834#file-rprint-lua
@@ -87,37 +127,44 @@ function file_exists(name)
 end
 
 function saveData()
-    for i=1,101 do
+    for i=1,100 do
         local fileName = saveFileBase .. i .. ".json"
 
         if not file_exists(fileName) then
-            outfile = io.open(fileName, 'w')
+            local outfile = io.open(fileName, 'w')
 
-            jsonData = {['inputCount'] = inputCount, ['maxGenerations'] = maxGenerations,
+            local jsonData = {['inputCount'] = inputCount, ['maxGenerations'] = maxGenerations,
                 ['breedChance'] = breedChance, ['mutateSubjectChance'] = mutateSubjectChance,
                 ['mutateInputChance'] = mutateInputChance, ['cullFinalAmount'] = cullFinalAmount,
                 ['generation'] = generation, ['iteration'] = iteration,
-                ['totalIterations'] = totalIterations, ['herd'] = herd}
+                ['totalIterations'] = totalIterations, ['currentState'] = currentState,
+                ['herd'] = herd }
+
+            print("Saved data to " .. fileName)
+            gui.addmessage("Saved data to " .. fileName)
 
             outfile:write(JSON:encode(jsonData))
             io.close(outfile)
+
+            return
         end
 
-        if i > 100 then
+        if i == 100 then
             print("Failed to save file after 100 attempts.")
+            gui.addmessage("Failed to save file after 100 attempts.")
         end
     end
 end
 
 function loadData()
-    for i=1,101 do
+    for i=1,100 do
         local fileName = saveFileBase .. i ..".json"
 
         if file_exists(fileName) then
-            infile = io.open(fileName, 'r')
+            local infile = io.open(fileName, 'r')
 
-            jsonString = infile:read("*all")
-            jsonData = JSON:decode(jsonString)
+            local jsonString = infile:read("*all")
+            local jsonData = JSON:decode(jsonString)
 
             inputCount = jsonData['inputCount']
             maxGenerations = jsonData['maxGenerations']
@@ -128,17 +175,35 @@ function loadData()
             generation = jsonData['generation']
             iteration = jsonData['iteration']
             totalIterations = jsonData['totalIterations']
+            currentState = jsonData['currentState']
             herd = jsonData['herd']
+
+            print("Loaded data from " .. fileName)
+            gui.addmessage("Loaded data from " .. fileName)
+
+            io.close(infile)
+
+            return
         end
 
         if i > 100 then
             print("Failed to load file after 100 attempts.")
+            gui.addmessage("Failed to load file after 100 attempts.")
         end
     end
 end
 
+function readUserInput()
+    inputKeys = input.get()
+
+    if inputKeys["S"] and not lastInput["S"] then saveData() end
+    if inputKeys["L"] and not lastInput["L"] then loadData() end
+
+    lastInput = inputKeys
+end
+
 function drawData()
-    gui.text(0, 0, "Fitness: " .. fitness, textBackgroundColor, textForegroundColor)
+    gui.text(0, 16, "Fitness: " .. fitness, textBackgroundColor, textForegroundColor)
     gui.text(0, 64, "Screen position: " .. screenPos, textBackgroundColor, textForegroundColor)
     gui.text(0, 80, "Health: " .. health, textBackgroundColor, textForegroundColor)
     gui.text(0, 96, "Lives: " .. lives, textBackgroundColor, textForegroundColor)
@@ -168,9 +233,9 @@ function drawData()
         gui.drawBox(140, 100, 230, 20, 0x00000000, screenBorderColor)
         gui.drawLine(140, 100, 140, 20)
         gui.drawLine(140, 100, 230, 100)
-        gui.text(450, 32, "Last 20 Fitnesses")
-        gui.text(400 - maxOffset, 64, maxFitness)
-        gui.text(400, 288, "0")
+        gui.text(900, 32, "Last 20 Fitnesses")
+        gui.text(800 - maxOffset, 64, maxFitness)
+        gui.text(816, 240, "0")
 
         for i=1,fitnessesToGraph - 1 do
             gui.drawLine(140 + (4.5 * (i - 1)), 100 - (80 * bestFitnesses[i] / maxFitness),
@@ -178,8 +243,6 @@ function drawData()
 
             i = i + 1
         end
-    else
-        gui.text(350, 32, "Graph will appear after this iteration")
     end
 end
 
@@ -203,7 +266,7 @@ function calculateFitness()
     yPos = memory.readbyte(ramAddresses["Y Pos"])
     horizScroll = memory.readbyte(ramAddresses["Horiz Scroll"])
 
-    return (screenPos + 1) * health * lives * math.pow((robotsBeaten + 1), 3)
+    return (screenPos + 1) * health * lives * math.pow((robotsBeaten + 1), 3)  + horizScroll
 end
 
 function byteToInputs(byte)
@@ -298,10 +361,11 @@ function testInputs(inputs, inputCount)
     for i =1, inputCount do
         currentInput = i
 
-        local fitness = calculateFitness()
+        fitness = calculateFitness()
         totalFitness = totalFitness + fitness
 
         drawData()
+        readUserInput()
 
         if lives == 0 or inputs[i] == nil then
             break
@@ -335,6 +399,8 @@ function testInputs(inputs, inputCount)
 end
 
 function sortHerd(herd)
+    if loadingFile then return herd end
+
     table.sort(herd, compareFitness)
 
     return herd
@@ -355,12 +421,15 @@ function cullHerd(herd)
 end
 
 function breedHerd(herd)
+
     local children = {}
     local childCount = 1
     local herdLength = table.getn(herd)
 
     for i=1, herdLength do
         for j=1,herdLength do
+            if loadingFile then return herd end
+
             if i ~= j and math.random() < breedChance then
                 local pivot = math.random(inputCount / 3, inputCount * 2 / 3)
                 local newInputs = {}
@@ -395,6 +464,8 @@ function mutateHerd(herd)
     local herdLength = table.getn(herd)
 
     for i=1, herdLength do
+        if loadingFile then return herd end
+
         if math.random() < mutateSubjectChance then
             for j=1, inputCount do
                 if math.random() < mutateInputChance then
@@ -409,24 +480,4 @@ function mutateHerd(herd)
     return herd
 end
 
-herd = generateHerd(initialSize)
-
-
-for _=1,maxGenerations do
-    herd = sortHerd(herd)
-
-    herd = cullHerd(herd)
-
-    currentState = 2
-    herd = breedHerd(herd)
-
-    currentState = 3
-    herd = mutateHerd(herd)
-
-    print("End of generation " .. generation + 1 .. ".  Best fitness: " .. herd[1][2][1])
-
-    iteration = 0
-    generation = generation + 1
-
-    if generation % 10 == 0 then saveData() end
-end
+main()
